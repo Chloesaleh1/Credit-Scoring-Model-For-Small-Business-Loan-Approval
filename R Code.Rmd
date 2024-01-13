@@ -1,0 +1,132 @@
+---
+title: "Project ISYE 6414"
+author: "Chloe Saleh"
+date: '2023-11-20'
+output: pdf_document
+---
+
+## Exploratory Data Analysis:
+
+```{r}
+### Krishna - Pre-Processing According to the Data Preprocessing doc
+loan_data <- read.csv('SBA_Loan_Approval.csv')
+cat("Unique Cities: ",length(unique(loan_data$City)), "\n")
+cat("Unique Banks: ",length(unique(loan_data$Bank)), "\n")
+cat("Unique Bank State: ",length(unique(loan_data$BankState)), "\n")
+cat("Unique NAICS codes: ",length(unique(loan_data$NAICS)), "\n")
+cat("Unique Years: ",length(unique(loan_data$NAICS)), "\n")
+cat("# of rows with undefined region classification:", sum(loan_data$UrbanRural == 0))
+
+# Remove specified columns
+columns_to_remove <- c("LoanNr_ChkDgt", "Name", "City", "State", "Zip", "ApprovalDate",
+                       "ChgOffDate", "DisbursementDate", "New", "Selected", "MIS_Status",
+                       "daysterm", "xx")
+loan_data <- loan_data[, !(names(loan_data) %in% columns_to_remove)]
+
+# Rename columns
+colnames(loan_data) <- c("Bank", "BankState", "NAICS", "Approval_Fiscal_Year", "Loan_Period_Days",
+                   "Number_of_Employees", "Business_Status", "Jobs_Created", "Jobs_Retained",
+                   "Franchise_Code", "Urban_Rural", "Revolving_Line_of_Credit", "Low_Doc",
+                   "Disbursed_Amount", "Gross_Balance", "MIS_Status", "Charged_Off_Amount",
+                   "Gross_Amount_Approved_by_Bank", "Gross_Amount_Approved_by_SBA",
+                   "Real_Estate", "Recession", "Default_Status")
+
+# Recode categorical variables
+loan_data$Business_Status <- ifelse(loan_data$Business_Status == 1, "Existing", "New")
+loan_data$Franchise_Code <- ifelse(loan_data$Franchise_Code %in% c(0, 1), "Not_Franchised", "Franchised")
+loan_data$Urban_Rural <- ifelse(loan_data$Urban_Rural == 1, "Urban", ifelse(loan_data$Urban_Rural == 2, "Rural", "Undefined"))
+loan_data$Revolving_Line_of_Credit <- ifelse(loan_data$Revolving_Line_of_Credit == "Y", "Yes", "No")
+loan_data$Low_Doc <- ifelse(loan_data$Low_Doc == "Y", "Yes", "No")
+loan_data$MIS_Status <- ifelse(loan_data$MIS_Status == "P I F", "Paid_in_Full", "Charged_Off")
+loan_data$Real_Estate <- ifelse(loan_data$Real_Estate == 1, "Yes", "No")
+loan_data$Recession <- ifelse(loan_data$Recession == 1, "Yes", "No")
+loan_data$Default_Status <- ifelse(loan_data$Default_Status == 1, "Default", "Not_Default")
+
+print(loan_data)
+```
+## Feature Engineering:
+
+To be completed
+
+## Variable Selection:
+
+Split the Dataset:
+```{r}
+library(caret)
+# Create index for training set
+trainIndex = createDataPartition(loan_data$Default_Status, p = 0.8, list = FALSE)
+
+# Split the data into training and test sets
+train_data = loan_data[trainIndex, ]
+test_data = loan_data[-trainIndex, ]
+print(train_data)
+```
+
+Stepwise regression:
+```{r}
+library(MASS)
+
+# Fit the initial model with all predictors
+initial_model = glm(Default_Status ~ ., data = train_data, family = binomial)
+
+# Apply stepwise regression
+stepwise_model = stepAIC(initial_model, direction = "both")
+summary(stepwise_model)
+```
+
+## Model Selection:
+
+Experiment with different logit functions:
+
+We want to compare the performance of logistic regression models with different link functions in terms of their ROC curves, which is a valuable tool for model evaluation in binary classification problems. We have decided not to select the Log-Log Link Function as an option. This link function is useful for modeling the rate of occurrence of rare events which is not the case in our study. It would have been appropriate if the probability of default was very low and increased rapidly at a certain point.
+
+```{r}
+# Fit logistic regression model with logit link
+set.seed(123)
+model_logit <- train(
+  Selected ~ EDUC + EXP, 
+  data = loan_data, 
+  method = "glm",
+  family = binomial(link = "logit"),
+  metric = "ROC",
+  trControl = control
+)
+
+# Fit logistic regression model with probit link
+set.seed(123)
+model_probit <- train(
+  Selected ~ EDUC + EXP, 
+  data = loan_data, 
+  method = "glm",
+  family = binomial(link = "probit"),
+  metric = "ROC",
+  trControl = control
+)
+
+library(pROC)
+# Predictions on training data
+logit_probs <- predict(model_logit, loan_data, type = "prob")[, "Yes"]
+probit_probs <- predict(model_probit, loan_data, type = "prob")[, "Yes"]
+
+# Create ROC objects
+roc_logit <- roc(loan_data$Selected, logit_probs)
+roc_probit <- roc(loan_data$Selected, probit_probs)
+
+# Plot ROC curves
+plot(roc_logit, col = "blue", main = "ROC Curves for Logit and Probit Models")
+plot(roc_probit, col = "red", add = TRUE)
+legend("bottomright", legend = c("Logit", "Probit"), col = c("blue", "red"), lwd = 2)
+```
+
+## Statistical Inference:
+
+1) Look at the p-value of the estimates in the summary and see if they are significant or not. Except for one, education regression coefficients are not statistically significant. Interpretation of at least one estimator. Example:The ratio of the odds of obesity for agegroup 25-34 versus the age group 18-24is exp(0.4727) = 1.604 (or, equivalentlythe log odds ratio is 0.4727), holding allother predicting variables fixed. Odds ofobesity for age group 25-34 are 60.4%higher than for age group 18-24 (baseline group)
+
+2) Hypothesis Testing:
+```{r}
+gstat = final_model$null.deviance - deviance(final_model)
+cbind(gstat, 1-pchisq(gstat,length(coef(model))-1))
+```
+
+Test for overall regression: p-value ≈ 0 (< 0.01). Reject the null hypothesis that all regression coefficients are zero. Conclude there are predicting variables
+that explain the variability in the loan defaulting of small businesses.
